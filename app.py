@@ -65,6 +65,19 @@ class App:
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
 
+        # Frame for selection buttons
+        selection_frame = ttk.Frame(root, padding=(10, 0, 10, 10))
+        selection_frame.pack(fill=tk.X)
+
+        self.select_all_button = ttk.Button(selection_frame, text="Select All", command=self.select_all)
+        self.select_all_button.pack(side=tk.LEFT)
+
+        self.unselect_all_button = ttk.Button(selection_frame, text="Unselect All", command=self.unselect_all)
+        self.unselect_all_button.pack(side=tk.LEFT, padx=5)
+
+        self.reset_button = ttk.Button(selection_frame, text="Reset", command=self.reset_selections)
+        self.reset_button.pack(side=tk.LEFT)
+
         # Frame for action buttons
         action_frame = ttk.Frame(root, padding="10")
         action_frame.pack(fill=tk.X)
@@ -74,6 +87,22 @@ class App:
 
         self.status_label = ttk.Label(action_frame, text="Enter a username to begin.")
         self.status_label.pack(side=tk.LEFT)
+
+    def select_all(self):
+        for var in self.model_vars.values():
+            var.set(True)
+
+    def unselect_all(self):
+        for var in self.model_vars.values():
+            var.set(False)
+
+    def reset_selections(self):
+        user = self.user_var.get().strip()
+        if not user:
+            return
+        downloaded_models = self.config.get(user, [])
+        for model_name, var in self.model_vars.items():
+            var.set(model_name in downloaded_models)
 
     def on_user_select(self, event):
         self.load_models()
@@ -129,9 +158,12 @@ class App:
         to_download = currently_selected - previously_downloaded
         to_delete = previously_downloaded - currently_selected
 
+        user_dir = os.path.join(BASE_DIR, user)
+        os.makedirs(user_dir, exist_ok=True)
+
         # Download new models
         for i, model_name in enumerate(to_download, 1):
-            target_dir = os.path.join(BASE_DIR, model_name.replace("/", "__"))
+            target_dir = os.path.join(user_dir, model_name.replace("/", "__"))
             self.status_label.config(text=f"Downloading {model_name} ({i}/{len(to_download)})...")
             self.root.update_idletasks()
             try:
@@ -141,7 +173,7 @@ class App:
 
         # Delete unchecked models
         for i, model_name in enumerate(to_delete, 1):
-            target_dir = os.path.join(BASE_DIR, model_name.replace("/", "__"))
+            target_dir = os.path.join(user_dir, model_name.replace("/", "__"))
             self.status_label.config(text=f"Deleting {model_name} ({i}/{len(to_delete)})...")
             self.root.update_idletasks()
             if os.path.exists(target_dir):
