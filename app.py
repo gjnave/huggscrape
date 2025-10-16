@@ -31,7 +31,7 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title("Hugging Face Model Downloader")
-        self.root.geometry("700x500")
+        self.root.geometry("700x700")
 
         self.config = load_config()
         self.hf_api = HfApi()
