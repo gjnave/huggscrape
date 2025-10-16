@@ -31,23 +31,24 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title("Hugging Face Model Downloader")
-        self.root.geometry("700x700")
+        self.root.geometry("900x760")  # a little taller and wider
 
         self.config = load_config()
         self.hf_api = HfApi()
         self.models = []
         self.model_vars = {}
 
-        # --- UI Elements ---
+        # Header
         self.setup_header(root)
-        # Frame for user input
+
+        # Username input
         input_frame = ttk.Frame(root, padding="10")
         input_frame.pack(fill=tk.X)
 
         ttk.Label(input_frame, text="Hugging Face User:").pack(side=tk.LEFT, padx=(0, 5))
 
         self.user_var = tk.StringVar()
-        self.user_combobox = ttk.Combobox(input_frame, textvariable=self.user_var, width=30)
+        self.user_combobox = ttk.Combobox(input_frame, textvariable=self.user_var, width=40)
         self.user_combobox['values'] = list(self.config.keys())
         self.user_combobox.pack(side=tk.LEFT, expand=True, fill=tk.X)
         self.user_combobox.bind("<<ComboboxSelected>>", self.on_user_select)
@@ -55,7 +56,7 @@ class App:
         self.load_button = ttk.Button(input_frame, text="Load Models", command=self.load_models)
         self.load_button.pack(side=tk.LEFT, padx=(5, 0))
 
-        # Frame for the model list
+        # Model list with scroll
         list_frame = ttk.Frame(root, padding="10")
         list_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -70,29 +71,23 @@ class App:
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
 
-        # Frame for selection buttons
+        # Selection controls
         selection_frame = ttk.Frame(root, padding=(10, 0, 10, 10))
         selection_frame.pack(fill=tk.X)
+        ttk.Button(selection_frame, text="Select All", command=self.select_all).pack(side=tk.LEFT)
+        ttk.Button(selection_frame, text="Unselect All", command=self.unselect_all).pack(side=tk.LEFT, padx=5)
+        ttk.Button(selection_frame, text="Reset", command=self.reset_selections).pack(side=tk.LEFT)
 
-        self.select_all_button = ttk.Button(selection_frame, text="Select All", command=self.select_all)
-        self.select_all_button.pack(side=tk.LEFT)
-
-        self.unselect_all_button = ttk.Button(selection_frame, text="Unselect All", command=self.unselect_all)
-        self.unselect_all_button.pack(side=tk.LEFT, padx=5)
-
-        self.reset_button = ttk.Button(selection_frame, text="Reset", command=self.reset_selections)
-        self.reset_button.pack(side=tk.LEFT)
-
-        # Search bar
+        # Search
         search_frame = ttk.Frame(root, padding=(10, 0, 10, 10))
         search_frame.pack(fill=tk.X)
         ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
         self.search_var = tk.StringVar()
-        self.search_var.trace("w", lambda name, index, mode: self.filter_models())
+        self.search_var.trace("w", lambda *args: self.filter_models())
         self.search_entry = ttk.Entry(search_frame, textvariable=self.search_var)
         self.search_entry.pack(fill=tk.X, expand=True)
 
-        # Filter radio buttons
+        # Filters
         filter_frame = ttk.Frame(root, padding=(10, 0, 10, 10))
         filter_frame.pack(fill=tk.X)
         self.filter_var = tk.StringVar(value="All")
@@ -100,7 +95,7 @@ class App:
         ttk.Radiobutton(filter_frame, text="Downloaded", variable=self.filter_var, value="Downloaded", command=self.filter_models).pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(filter_frame, text="Not Downloaded", variable=self.filter_var, value="Not Downloaded", command=self.filter_models).pack(side=tk.LEFT)
 
-        # Frame for action buttons
+        # Actions
         action_frame = ttk.Frame(root, padding="10")
         action_frame.pack(fill=tk.X)
 
@@ -130,6 +125,53 @@ class App:
         music_link.pack()
         music_link.bind("<Button-1>", lambda e: open_url("https://music.youtube.com/channel/UCGV4scbVcBqo2aVTy23JJeA"))
 
+    # ---------- Helpers ----------
+    def safe_dirname(self, model_id: str) -> str:
+        """Convert repo id like user/repo into single folder name using __."""
+        return model_id.replace('/', '__')
+
+    def legacy_nested_path(self, user: str, model_id: str) -> str:
+        """Legacy layout where repo parts became nested folders."""
+        parts = model_id.split('/')
+        return os.path.join(BASE_DIR, user, *parts)
+
+    def resolve_model_path(self, user: str, model_id: str) -> str | None:
+        """
+        Resolve the on-disk folder for a model id.
+        Order:
+          1) Preferred: BASE_DIR/user/{user__repo}
+          2) Case-insensitive match in BASE_DIR/user
+          3) Legacy nested path BASE_DIR/user/user/repo
+        Returns a path that exists, or None.
+        """
+        user_dir = os.path.join(BASE_DIR, user)
+        safe_name = self.safe_dirname(model_id)
+
+        # 1) Preferred
+        p1 = os.path.join(user_dir, safe_name)
+        if os.path.exists(p1):
+            return p1
+
+        # 2) Case-insensitive match in user_dir
+        if os.path.isdir(user_dir):
+            try:
+                entries = os.listdir(user_dir)
+                for entry in entries:
+                    if entry.lower() == safe_name.lower():
+                        p2 = os.path.join(user_dir, entry)
+                        if os.path.exists(p2):
+                            return p2
+            except Exception:
+                pass
+
+        # 3) Legacy nested layout
+        p3 = self.legacy_nested_path(user, model_id)
+        if os.path.exists(p3):
+            return p3
+
+        return None
+
+    # ---------- UI actions ----------
     def select_all(self):
         for var in self.model_vars.values():
             var.set(True)
@@ -142,9 +184,9 @@ class App:
         user = self.user_var.get().strip()
         if not user:
             return
-        downloaded_models = self.config.get(user, [])
-        for model_name, var in self.model_vars.items():
-            var.set(model_name in downloaded_models)
+        downloaded = self.config.get(user, [])
+        for name, var in self.model_vars.items():
+            var.set(name in downloaded)
 
     def on_user_select(self, event):
         self.load_models()
@@ -157,20 +199,18 @@ class App:
 
         self.load_button.config(state=tk.DISABLED)
         self.status_label.config(text=f"Loading models for {user}...")
-
-        thread = threading.Thread(target=self._load_models_thread, args=(user,))
-        thread.start()
+        threading.Thread(target=self._load_models_thread, args=(user,)).start()
 
     def _load_models_thread(self, user):
         try:
             self.models = list(self.hf_api.list_models(author=user))
             self.model_vars = {}
-            downloaded_models = self.config.get(user, [])
-            for model in self.models:
-                model_name = model.modelId
+            downloaded = self.config.get(user, [])
+            for m in self.models:
+                name = m.modelId
                 var = tk.BooleanVar()
-                var.set(model_name in downloaded_models)
-                self.model_vars[model_name] = var
+                var.set(name in downloaded)
+                self.model_vars[name] = var
             self.root.after(0, self.filter_models)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to fetch models: {e}")
@@ -179,53 +219,78 @@ class App:
             self.load_button.config(state=tk.NORMAL)
 
     def display_models(self, user, search_term="", filter_mode="All"):
-        for widget in self.scrollable_frame.winfo_children():
-            widget.destroy()
+        for w in self.scrollable_frame.winfo_children():
+            w.destroy()
 
-        downloaded_models = self.config.get(user, [])
+        downloaded = self.config.get(user, [])
 
-        for model in self.models:
-            model_name = model.modelId
-            is_downloaded = model_name in downloaded_models
+        for m in self.models:
+            name = m.modelId
+            # Consider a model downloaded if either selected previously or folder exists
+            has_folder = self.resolve_model_path(user, name) is not None
+            is_downloaded = (name in downloaded) or has_folder
 
-            if search_term.lower() not in model_name.lower():
+            if search_term.lower() not in name.lower():
                 continue
-
             if filter_mode == "Downloaded" and not is_downloaded:
                 continue
-            elif filter_mode == "Not Downloaded" and is_downloaded:
+            if filter_mode == "Not Downloaded" and is_downloaded:
                 continue
 
             container = ttk.Frame(self.scrollable_frame)
             container.pack(anchor=tk.W, fill=tk.X, expand=True)
 
-            var = self.model_vars[model_name]
-            cb = ttk.Checkbutton(container, variable=var)
-            cb.pack(side=tk.LEFT)
+            var = self.model_vars[name]
+            ttk.Checkbutton(container, variable=var).pack(side=tk.LEFT)
 
             if is_downloaded:
-                model_path = os.path.join(BASE_DIR, user, *model_name.split('/'))
-                link = ttk.Label(container, text=model_name, foreground="blue", cursor="hand2")
+                # Build link that resolves dynamically at click time
+                link = ttk.Label(container, text=name, foreground="blue", cursor="hand2")
                 link.pack(side=tk.LEFT, padx=5)
-                link.bind("<Button-1>", lambda e, path=model_path: self.open_folder(path))
+                link.bind("<Button-1>", lambda e, u=user, n=name: self.open_model_folder(u, n))
             else:
-                ttk.Label(container, text=model_name).pack(side=tk.LEFT, padx=5)
+                ttk.Label(container, text=name).pack(side=tk.LEFT, padx=5)
 
         self.status_label.config(text=f"Loaded {len(self.models)} models for {user}.")
 
+    def open_model_folder(self, user: str, model_id: str):
+        path = self.resolve_model_path(user, model_id)
+        if not path:
+            # Helpful diagnostics if something is off
+            user_dir = os.path.join(BASE_DIR, user)
+            safe_name = self.safe_dirname(model_id)
+            legacy = self.legacy_nested_path(user, model_id)
+            messagebox.showerror(
+                "Error",
+                "Folder not found for this model.\n\n"
+                f"Tried:\n"
+                f"1) {os.path.join(user_dir, safe_name)}\n"
+                f"2) Case-insensitive match in {user_dir}\n"
+                f"3) {legacy}\n\n"
+                "If you downloaded with an older version, try re-syncing."
+            )
+            return
+
+        self.open_folder(path)
+
     def open_folder(self, path):
-        if sys.platform == "win32":
-            os.startfile(path)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", path])
+        if os.path.exists(path):
+            if sys.platform == "win32":
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
         else:
-            subprocess.Popen(["xdg-open", path])
+            messagebox.showerror("Error", f"Folder not found:\n{path}")
 
     def filter_models(self):
         user = self.user_var.get().strip()
-        search_term = self.search_var.get().strip()
-        filter_mode = self.filter_var.get()
-        self.display_models(user, search_term, filter_mode)
+        if not user:
+            return
+        search = self.search_var.get().strip()
+        mode = self.filter_var.get()
+        self.display_models(user, search, mode)
 
     def sync_models(self):
         user = self.user_var.get().strip()
@@ -235,41 +300,49 @@ class App:
 
         self.sync_button.config(state=tk.DISABLED)
         self.status_label.config(text="Syncing models...")
-
-        thread = threading.Thread(target=self._sync_models_thread, args=(user,))
-        thread.start()
+        threading.Thread(target=self._sync_models_thread, args=(user,)).start()
 
     def _sync_models_thread(self, user):
         try:
-            currently_selected = {name for name, var in self.model_vars.items() if var.get()}
-            previously_downloaded = set(self.config.get(user, []))
-
-            to_download = currently_selected - previously_downloaded
-            to_delete = previously_downloaded - currently_selected
+            selected = {n for n, v in self.model_vars.items() if v.get()}
+            prev = set(self.config.get(user, []))
+            to_download = selected - prev
+            to_delete = prev - selected
 
             user_dir = os.path.join(BASE_DIR, user)
             os.makedirs(user_dir, exist_ok=True)
 
-            # Download new models
-            for i, model_name in enumerate(to_download, 1):
-                target_dir = os.path.join(user_dir, *model_name.split('/'))
-                self.root.after(0, self.status_label.config, {'text': f"Downloading {model_name} ({i}/{len(to_download)})..."})
+            # Download models into preferred layout user_dir/{user__repo}
+            for i, name in enumerate(to_download, 1):
+                safe_name = self.safe_dirname(name)
+                target_dir = os.path.join(user_dir, safe_name)
+                self.root.after(0, self.status_label.config, {'text': f"Downloading {name} ({i}/{len(to_download)})..."})
                 try:
-                    snapshot_download(repo_id=model_name, local_dir=target_dir)
+                    snapshot_download(
+                        repo_id=name,
+                        local_dir=target_dir,
+                        local_dir_use_symlinks=False
+                    )
                 except Exception as e:
-                    messagebox.showerror("Error", f"Failed to download {model_name}: {e}")
+                    messagebox.showerror("Error", f"Failed to download {name}: {e}")
 
-            # Delete unchecked models
-            for i, model_name in enumerate(to_delete, 1):
-                target_dir = os.path.join(user_dir, *model_name.split('/'))
-                self.root.after(0, self.status_label.config, {'text': f"Deleting {model_name} ({i}/{len(to_delete)})..."})
-                if os.path.exists(target_dir):
-                    shutil.rmtree(target_dir)
+            # Delete unchecked models in both possible layouts
+            for i, name in enumerate(to_delete, 1):
+                self.root.after(0, self.status_label.config, {'text': f"Deleting {name} ({i}/{len(to_delete)})..."})
+
+                # Preferred layout
+                safe_name = self.safe_dirname(name)
+                preferred_dir = os.path.join(user_dir, safe_name)
+                if os.path.exists(preferred_dir):
+                    shutil.rmtree(preferred_dir, ignore_errors=True)
+
+                # Legacy layout
+                legacy_dir = self.legacy_nested_path(user, name)
+                if os.path.exists(legacy_dir):
+                    shutil.rmtree(legacy_dir, ignore_errors=True)
 
             # Update config
-            if user not in self.config:
-                self.root.after(0, self.user_combobox.config, {'values': list(self.config.keys()) + [user]})
-            self.config[user] = list(currently_selected)
+            self.config[user] = list(selected)
             save_config(self.config)
 
             self.root.after(0, self.status_label.config, {'text': "Sync complete."})
